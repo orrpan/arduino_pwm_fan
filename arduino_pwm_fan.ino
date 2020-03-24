@@ -1,12 +1,5 @@
 /***
- *  For arduino nano timer1 pin 9 and 10, timer 2 pin 3 
- *  Usage 
- *  {'0':100}
- *  {'0':50,'2':25}
- *  {'1':50,'debug':1}
- *  {'all':25}
- *  {'reset':1}
- * 
+ *  orrpan github
  */
 
 #include <PWM.h> //include PWM library http://forum.arduino.cc/index.php?topic=117425.0
