@@ -1,8 +1,12 @@
 /***
  *  For arduino nano timer1 pin 9 and 10, timer 2 pin 3 
  *  Usage 
- *  {'0':100,'1':-1,'3':25}
- *  -1 is don't change.  
+ *  {'0':100}
+ *  {'0':50,'2':25}
+ *  {'1':50,'debug':1}
+ *  {'all':25}
+ *  {'reset':1}
+ * 
  */
 
 #include <PWM.h> //include PWM library http://forum.arduino.cc/index.php?topic=117425.0
@@ -20,6 +24,9 @@ char c;
 int PIN_PWM[FANS] = {9, 10, 3};
 int PWM_CURRENT[FANS] = {80, 80, 80}; // 51=20% duty cycle, 255=100% duty cycle
 int PIN_SWITCH[SWITCHES] = {5, 6};
+int SWITCH_CURRENT[SWITCHES] = {1, 1};
+
+void (*resetFunc)(void) = 0;
 
 void setup()
 {
@@ -33,10 +40,11 @@ void setup()
   pwmWrite(PIN_PWM[2], PWM_CURRENT[2]);       // 51=20% duty cycle, 255=100% duty cycle
   pinMode(PIN_SWITCH[0], OUTPUT);
   pinMode(PIN_SWITCH[1], OUTPUT);
-  digitalWrite(PIN_SWITCH[0], HIGH);
-  digitalWrite(PIN_SWITCH[1], HIGH);
+  digitalWrite(PIN_SWITCH[0], SWITCH_CURRENT[0]);
+  digitalWrite(PIN_SWITCH[1], SWITCH_CURRENT[1]);
 
   Serial.begin(115200);
+  Serial.println("Online");
 }
 
 void loop()
@@ -51,32 +59,55 @@ void loop()
   if (msg.length() > 0)
   {
     JsonObject &inputJSON = jsonBuffer.parseObject(msg);
-    JsonObject &outputJSON = jsonBuffer.createObject();
-    JsonArray &fansJSON = outputJSON.createNestedArray("fans");
 
-    int val[FANS] = {inputJSON["0"], inputJSON["1"], inputJSON["2"]};
-    int debug = inputJSON["debug"];
-
-    for (auto fanID = 0; fanID < FANS; fanID++)
+    if (inputJSON["reset"])
     {
-      if (val[fanID] != -1)
-      {
-        if (!setFanValue(fanID, val[fanID]))
-        {
-          outputJSON["error"] = String("Unable to set value, id:" + String(fanID) + ", value: " + String(val[fanID]));
-        }
-      }
-      JsonObject &fan = jsonBuffer.createObject();
-      if (debug)
-      {
-        fan["id"] = fanID;
-        fan["raw"] = PWM_CURRENT[fanID];
-      }
-      fan["value"] = getFanValue(fanID);
-      fansJSON.add(fan);
+      Serial.println("reset");
+      delay(2);
+      resetFunc();
     }
-    outputJSON.printTo(Serial);
-    Serial.print("\n");
+
+    const char *fanAllExists = inputJSON["all"];
+    const char *fanExists[FANS] = {inputJSON["0"], inputJSON["1"], inputJSON["2"]};
+    int fanValue[FANS] = {inputJSON["0"], inputJSON["1"], inputJSON["2"]};
+    if (fanAllExists)
+    {
+      fanValue[0] = inputJSON["all"];
+      fanValue[1] = inputJSON["all"];
+      fanValue[2] = inputJSON["all"];
+    }
+
+    if (fanExists[0] || fanExists[1] || fanExists[2] || fanAllExists)
+    {
+      JsonObject &outputJSON = jsonBuffer.createObject();
+      JsonArray &fansJSON = outputJSON.createNestedArray("fans");
+
+      for (auto fanID = 0; fanID < FANS; fanID++)
+      {
+        if (fanExists[fanID] || fanAllExists)
+        {
+          if (!setFanValue(fanID, fanValue[fanID]))
+          {
+            outputJSON["error"] = String("Unable to set value, id:" + String(fanID) + ", value: " + String(fanValue[fanID]));
+          }
+        }
+
+        JsonObject &fan = jsonBuffer.createObject();
+        if (inputJSON["debug"] == 1)
+        {
+          fan["raw"] = PWM_CURRENT[fanID];
+          if (validateSwitchID(fanID))
+          {
+            fan["switch"] = SWITCH_CURRENT[fanID];
+          }
+        }
+        fan["id"] = fanID;
+        fan["value"] = getFanValue(fanID);
+        fansJSON.add(fan);
+      }
+      outputJSON.printTo(Serial);
+      Serial.print("\n");
+    }
     jsonBuffer.clear();
   }
   msg = "";
@@ -100,6 +131,15 @@ bool validateFanID(int id)
   return false;
 }
 
+bool validateSwitchID(int id)
+{
+  if (id >= 0 && id < SWITCHES)
+  {
+    return true;
+  }
+  return false;
+}
+
 int toRawValue(int val)
 {
   return map(val, 0, 100, 20, 255);
@@ -116,15 +156,19 @@ bool setFanValue(int id, int val)
   {
     if (validateFanID(id))
     {
-      if (id >= 0 & id < SWITCHES)
+      if (validateSwitchID(id))
       {
         if (val <= 0)
         {
-          digitalWrite(PIN_SWITCH[id], LOW);
+          // LOW
+          SWITCH_CURRENT[id] = 0;
+          digitalWrite(PIN_SWITCH[id], 0);
         }
         else
         {
-          digitalWrite(PIN_SWITCH[id], HIGH);
+          // HIGH
+          SWITCH_CURRENT[id] = 1;
+          digitalWrite(PIN_SWITCH[id], 1);
         }
       }
       PWM_CURRENT[id] = toRawValue(val);
@@ -141,6 +185,15 @@ int getFanValue(int id)
   if (validateFanID(id))
   {
     return fromRawValue(PWM_CURRENT[id]);
+  }
+  return -1;
+}
+
+int getSwitchValue(int id)
+{
+  if (validateSwitchID(id))
+  {
+    return SWITCH_CURRENT[id];
   }
   return -1;
 }
