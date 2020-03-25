@@ -19,6 +19,9 @@ int PWM_CURRENT[FANS] = {80, 80, 80}; // 51=20% duty cycle, 255=100% duty cycle
 int PIN_SWITCH[SWITCHES] = {5, 6};
 int SWITCH_CURRENT[SWITCHES] = {1, 1};
 
+bool debugResponse = false;
+bool sendStartMessage = true;
+
 void (*resetFunc)(void) = 0;
 
 void setup()
@@ -49,15 +52,24 @@ void loop()
     msg += c;          // append the character to our "command" string
   }
   Serial.flush();
-  if (msg.length() > 0)
+  if (msg.length() > 0 || sendStartMessage)
   {
     JsonObject &inputJSON = jsonBuffer.parseObject(msg);
+    const char *cmdExists = inputJSON["cmd"];
 
-    if (inputJSON["reset"])
+    if (cmdExists)
     {
-      Serial.println("reset");
-      delay(2);
-      resetFunc();
+      if (inputJSON["cmd"] == "restart")
+      {
+        Serial.println("restart");
+        delay(2);
+        resetFunc();
+      }
+      else if (inputJSON["cmd"] == "debug")
+      {
+        debugResponse = !debugResponse;
+        delay(2);
+      }
     }
 
     const char *fanAllExists = inputJSON["all"];
@@ -70,7 +82,7 @@ void loop()
       fanValue[2] = inputJSON["all"];
     }
 
-    if (fanExists[0] || fanExists[1] || fanExists[2] || fanAllExists)
+    if (fanExists[0] || fanExists[1] || fanExists[2] || fanAllExists || sendStartMessage)
     {
       JsonObject &outputJSON = jsonBuffer.createObject();
       JsonArray &fansJSON = outputJSON.createNestedArray("fans");
@@ -86,7 +98,7 @@ void loop()
         }
 
         JsonObject &fan = jsonBuffer.createObject();
-        if (inputJSON["debug"] == 1)
+        if (debugResponse)
         {
           fan["raw"] = PWM_CURRENT[fanID];
           if (validateSwitchID(fanID))
@@ -103,6 +115,7 @@ void loop()
     }
     jsonBuffer.clear();
   }
+  sendStartMessage = false;
   msg = "";
 }
 
