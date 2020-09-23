@@ -57,7 +57,7 @@ void setup()
     outputJSON["status"] = "error";
   }
   outputJSON.printTo(Serial);
-  Serial.print("\n");
+  Serial.println();
   jsonBuffer.clear();
 }
 
@@ -89,7 +89,7 @@ void loop()
         outputJSON["status"] = "offline";
         outputJSON.printTo(Serial);
         delay(5);
-        Serial.print("\n");
+        Serial.println();
         resetFunc();
       }
       else
@@ -124,7 +124,7 @@ void loop()
       }
 
       outputJSON.printTo(Serial);
-      Serial.print("\n");
+      Serial.println();
       jsonBuffer.clear();
     }
   }
