@@ -1,4 +1,3 @@
-#include <PWM.h>         //include PWM library http://forum.arduino.cc/index.php?topic=117425.0
 #include <ArduinoJson.h> // using ArduinoJson 5
 
 /***
@@ -7,27 +6,26 @@
 
 StaticJsonBuffer<256> jsonBuffer;
 
-const int FANS = 3;
-const int FAN_INIT = 51;
-const int FAN_INIT_FREQ = 25000; // 51=20% duty cycle, 255=100% duty cycle
+const int FANS = 4;
+const int FAN_INIT = 10;
 
-const int SWITCHES = 3;
-const int SWITCH_INIT = 1;
+const int RELAYS = 4;
+const int RELAY_INIT = 1;
 
-const int PIN_PWM[FANS] = {9, 10, 3};
-const int PIN_SWITCH[SWITCHES] = {5, 6, 7};
+const int PIN_PWM[FANS] = {3, 5, 9, 10};
+const int PIN_RELAY[RELAYS] = {2, 4, 7, 12};
 
-const int FAN_MIN = 0
-const int FAN_MAX = 100
-const int RAW_MIN = 20
-const int RAW_MAX = 255
+const int FAN_MIN = 0;
+const int FAN_MAX = 100;
+const int RAW_MIN = 2;
+const int RAW_MAX = 158;
 
 String msg;
 String val[FANS];
 char c;
 
-int pwmCurrent[FANS] = {51, 51, 51};
-int switchCurrent[SWITCHES] = {1, 1, 1};
+int pwmCurrent[FANS] = {};
+int relayCurrent[RELAYS] = {};
 
 bool debugResponse = false;
 bool sendStartMessage = true;
@@ -36,28 +34,61 @@ void (*resetFunc)(void) = 0;
 
 void setup()
 {
-  InitTimersSafe(); //not sure what this is for, but I think i need it for PWM control?
-  bool success =
-      SetPinFrequencySafe(PIN_PWM[0], FAN_INIT_FREQ) &&
-      SetPinFrequencySafe(PIN_PWM[1], FAN_INIT_FREQ) &&
-      SetPinFrequencySafe(PIN_PWM[2], FAN_INIT_FREQ); //set frequency to 25kHz
-  pwmWrite(PIN_PWM[0], pwmCurrent[0]);                // 51=20% duty cycle, 255=100% duty cycle
-  pwmWrite(PIN_PWM[1], pwmCurrent[1]);                // 51=20% duty cycle, 255=100% duty cycle
-  pwmWrite(PIN_PWM[2], pwmCurrent[2]);                // 51=20% duty cycle, 255=100% duty cycle
-  pinMode(PIN_SWITCH[0], OUTPUT);
-  pinMode(PIN_SWITCH[1], OUTPUT);
-  pinMode(PIN_SWITCH[2], OUTPUT);
-  digitalWrite(PIN_SWITCH[0], switchCurrent[0]);
-  digitalWrite(PIN_SWITCH[1], switchCurrent[1]);
-  digitalWrite(PIN_SWITCH[2], switchCurrent[2]);
 
+  // PWM init
+  // https://arduino.stackexchange.com/questions/25609/set-pwm-frequency-to-25-khz
+  // Set the main system clock to 8 MHz.
+  noInterrupts();
+  CLKPR = _BV(CLKPCE); // enable change of the clock prescaler
+  CLKPR = _BV(CLKPS0); // divide frequency by 2
+  interrupts();
+
+  // Configure Timer 0 for phase correct PWM @ 25 kHz.
+  TCCR0A = 0;            // undo the configuration done by...
+  TCCR0B = 0;            // ...the Arduino core library
+  TCNT0 = 0;             // reset timer
+  TCCR0A = _BV(COM0B1)   // non-inverted PWM on ch. B
+           | _BV(WGM00); // mode 5: ph. correct PWM, TOP = OCR0A
+  TCCR0B = _BV(WGM02)    // ditto
+           | _BV(CS00);  // prescaler = 1
+  OCR0A = 160;           // TOP = 160
+
+  // Same for Timer 1.
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = 0;
+  TCCR1A = _BV(COM1A1)   // non-inverted PWM on ch. A
+           | _BV(COM1B1) // same on ch. B
+           | _BV(WGM11); // mode 10: ph. correct PWM, TOP = ICR1
+  TCCR1B = _BV(WGM13)    // ditto
+           | _BV(CS10);  // prescaler = 1
+  ICR1 = 160;
+
+  // Same for Timer 2.
+  TCCR2A = 0;
+  TCCR2B = 0;
+  TCNT2 = 0;
+  TCCR2A = _BV(COM2B1)   // non-inverted PWM on ch. B
+           | _BV(WGM20); // mode 5: ph. correct PWM, TOP = OCR2A
+  TCCR2B = _BV(WGM22)    // ditto
+           | _BV(CS20);  // prescaler = 1
+  OCR2A = 160;
+  for (auto pin = 0; pin < FANS; pin++)
+  {
+    analogWrite(PIN_PWM[pin], FAN_INIT);
+  }
+
+  // Relay init
+  for (auto pin = 0; pin < RELAYS; pin++)
+  {
+    pinMode(PIN_RELAY[pin], OUTPUT);
+    digitalWrite(PIN_RELAY[pin], RELAY_INIT);
+  }
+
+  // serial is half of below due to chaning chip speed
   Serial.begin(115200);
   JsonObject &outputJSON = jsonBuffer.createObject();
   outputJSON["status"] = "online";
-  if (!success)
-  {
-    outputJSON["error"] = "could not set pin frequency";
-  }
   outputJSON.printTo(Serial);
   Serial.println();
   jsonBuffer.clear();
@@ -67,7 +98,7 @@ void loop()
 {
   while (Serial.available() > 0)
   {
-    delay(5);          // small delay because it can only deliver the bytes so quickly
+    delay(10);         // small delay because it can only deliver the bytes so quickly
     c = Serial.read(); // you have to read one byte (one character) at a time
     msg += c;          // append the character to our "command" string
   }
@@ -90,7 +121,7 @@ void loop()
       {
         outputJSON["status"] = "offline";
         outputJSON.printTo(Serial);
-        delay(5);
+        delay(10);
         Serial.println();
         resetFunc();
       }
@@ -111,7 +142,7 @@ void loop()
           JsonObject &fan = jsonBuffer.createObject();
           fan["id"] = id;
           fan["value"] = getFanValue(id);
-          fan["switch"] = getSwitchValue(id);
+          fan["relay"] = getRelayValue(id);
           if (debugResponse)
           {
             fan["raw"] = pwmCurrent[id];
@@ -147,9 +178,9 @@ bool validateFanID(int id)
   return false;
 }
 
-bool validateSwitchID(int id)
+bool validateRelayID(int id)
 {
-  if (id >= 0 && id < SWITCHES)
+  if (id >= 0 && id < RELAYS)
   {
     return true;
   }
@@ -170,23 +201,23 @@ bool setFanValue(int id, int val)
 {
   if (validateFanID(id) && validateFanValue(val))
   {
-    if (validateSwitchID(id))
+    if (validateRelayID(id))
     {
       if (val <= 0)
       {
         // LOW
-        switchCurrent[id] = 0;
-        digitalWrite(PIN_SWITCH[id], 0);
+        relayCurrent[id] = 0;
+        digitalWrite(PIN_RELAY[id], 0);
       }
       else
       {
         // HIGH
-        switchCurrent[id] = 1;
-        digitalWrite(PIN_SWITCH[id], 1);
+        relayCurrent[id] = 1;
+        digitalWrite(PIN_RELAY[id], 1);
       }
     }
     pwmCurrent[id] = toRawValue(val);
-    pwmWrite(PIN_PWM[id], pwmCurrent[id]);
+    analogWrite(PIN_PWM[id], pwmCurrent[id]);
     return true;
   }
   return false;
@@ -201,11 +232,11 @@ int getFanValue(int id)
   return -1;
 }
 
-int getSwitchValue(int id)
+int getRelayValue(int id)
 {
-  if (validateSwitchID(id))
+  if (validateRelayID(id))
   {
-    return switchCurrent[id];
+    return relayCurrent[id];
   }
   return -1;
 }
