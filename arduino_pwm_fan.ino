@@ -1,4 +1,4 @@
-#include <PWM.h> //include PWM library http://forum.arduino.cc/index.php?topic=117425.0
+#include <PWM.h>         //include PWM library http://forum.arduino.cc/index.php?topic=117425.0
 #include <ArduinoJson.h> // using ArduinoJson 5
 
 /***
@@ -17,12 +17,17 @@ const int SWITCH_INIT = 1;
 const int PIN_PWM[FANS] = {9, 10, 3};
 const int PIN_SWITCH[SWITCHES] = {5, 6, 7};
 
+const int FAN_MIN = 0
+const int FAN_MAX = 100
+const int RAW_MIN = 20
+const int RAW_MAX = 255
+
 String msg;
 String val[FANS];
 char c;
 
-int pwmCurrent[FANS] = {FAN_INIT, FAN_INIT, FAN_INIT};
-int switchCurrent[SWITCHES] = {SWITCH_INIT, SWITCH_INIT, SWITCH_INIT};
+int pwmCurrent[FANS] = {51, 51, 51};
+int switchCurrent[SWITCHES] = {1, 1, 1};
 
 bool debugResponse = false;
 bool sendStartMessage = true;
@@ -36,9 +41,9 @@ void setup()
       SetPinFrequencySafe(PIN_PWM[0], FAN_INIT_FREQ) &&
       SetPinFrequencySafe(PIN_PWM[1], FAN_INIT_FREQ) &&
       SetPinFrequencySafe(PIN_PWM[2], FAN_INIT_FREQ); //set frequency to 25kHz
-  pwmWrite(PIN_PWM[0], pwmCurrent[0]);               // 51=20% duty cycle, 255=100% duty cycle
-  pwmWrite(PIN_PWM[1], pwmCurrent[1]);               // 51=20% duty cycle, 255=100% duty cycle
-  pwmWrite(PIN_PWM[2], pwmCurrent[2]);               // 51=20% duty cycle, 255=100% duty cycle
+  pwmWrite(PIN_PWM[0], pwmCurrent[0]);                // 51=20% duty cycle, 255=100% duty cycle
+  pwmWrite(PIN_PWM[1], pwmCurrent[1]);                // 51=20% duty cycle, 255=100% duty cycle
+  pwmWrite(PIN_PWM[2], pwmCurrent[2]);                // 51=20% duty cycle, 255=100% duty cycle
   pinMode(PIN_SWITCH[0], OUTPUT);
   pinMode(PIN_SWITCH[1], OUTPUT);
   pinMode(PIN_SWITCH[2], OUTPUT);
@@ -48,13 +53,10 @@ void setup()
 
   Serial.begin(115200);
   JsonObject &outputJSON = jsonBuffer.createObject();
-  if (success)
+  outputJSON["status"] = "online";
+  if (!success)
   {
-    outputJSON["status"] = "online";
-  }
-  else
-  {
-    outputJSON["status"] = "error";
+    outputJSON["error"] = "could not set pin frequency";
   }
   outputJSON.printTo(Serial);
   Serial.println();
@@ -70,14 +72,14 @@ void loop()
     msg += c;          // append the character to our "command" string
   }
   Serial.flush();
-  if (msg.length() > 0)
+  if (msg.length() > 0 || sendStartMessage)
   {
     JsonObject &inputJSON = jsonBuffer.parseObject(msg);
     JsonObject &outputJSON = jsonBuffer.createObject();
     const char *cmdExists = inputJSON["cmd"];
     const char *idExists = inputJSON["id"];
 
-    if (cmdExists || idExists)
+    if (cmdExists || idExists || sendStartMessage)
     {
       if (inputJSON["cmd"] == "debug")
       {
@@ -94,23 +96,18 @@ void loop()
       }
       else
       {
-        JsonArray &fanJSON = outputJSON.createNestedArray("fan");
-        int fromID = 0;
-        int toID = FANS;
-        if (inputJSON["id"] != "all")
+        JsonArray &fansJSON = outputJSON.createNestedArray("fans");
+        for (auto id = 0; id < FANS; id++)
         {
-          fromID = int(inputJSON["id"]) + 0;
-          toID = int(inputJSON["id"]) + 1;
-        }
-
-        for (auto id = fromID; id < toID; id++)
-        {
-          int val = inputJSON["value"];
-          if (!setFanValue(id, val))
+          if (inputJSON["id"] == "all" || int(inputJSON["id"]) == id)
           {
-            outputJSON["error"] = String("Unable to set value, id:" + String(id) + ", value: " + String(val));
+            int val = int(inputJSON["value"]);
+            if (!setFanValue(id, val))
+            {
+              outputJSON.remove("fan");
+              outputJSON["error"] = String("Unable to set value, id: " + String(id) + ", value: " + String(val));
+            }
           }
-
           JsonObject &fan = jsonBuffer.createObject();
           fan["id"] = id;
           fan["value"] = getFanValue(id);
@@ -119,21 +116,22 @@ void loop()
           {
             fan["raw"] = pwmCurrent[id];
           }
-          fanJSON.add(fan);
+          fansJSON.add(fan);
         }
       }
 
       outputJSON.printTo(Serial);
       Serial.println();
-      jsonBuffer.clear();
     }
   }
+  jsonBuffer.clear();
+  sendStartMessage = false;
   msg = "";
 }
 
 bool validateFanValue(int val)
 {
-  if (val >= 0 && val <= 100)
+  if (val >= FAN_MIN && val <= FAN_MAX)
   {
     return true;
   }
@@ -160,12 +158,12 @@ bool validateSwitchID(int id)
 
 int toRawValue(int val)
 {
-  return map(val, 0, 100, 20, 255);
+  return map(val, FAN_MIN, FAN_MAX, RAW_MIN, RAW_MAX);
 }
 
 int fromRawValue(int val)
 {
-  return map(val, 20, 255, 0, 100);
+  return map(val, RAW_MIN, RAW_MAX, FAN_MIN, FAN_MAX);
 }
 
 bool setFanValue(int id, int val)
