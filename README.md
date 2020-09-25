@@ -21,7 +21,13 @@ Switch pins: 2, 4, 7, 12
 
 ## Homeassistant with tasmota (fan speed needs to be fixed)
 ### Tasmota esp01
-![](img/tasmota.png)
+
+<img src="img/tasmota.png" width="300" />
+
+In console set baudrate
+```
+Baudrate 57600
+```
 
 ### Home assistant
 Change tasmota_XXXXXX to your own
@@ -59,7 +65,7 @@ sensor:
 ```
 ```yaml
 fan:
-    - platform: template
+  - platform: template
     fans:
         fan0:
         friendly_name: 'fan0'
